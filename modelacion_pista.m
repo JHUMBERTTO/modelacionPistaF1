@@ -41,11 +41,17 @@ function modelacion_pista()
 
     % Determinamos zonas criticas
     x_track = 10:1:280;
-    [R, dy, y] = calcularRadioCurvatura(coefs, x_track);
+    [R] = calcularRadioCurvatura(coefs, x_track);
+    disp(R);
 
     % Analizar Seguridad
     % Esta funcion imprime un reporte Y nos devuelve los puntos para graficar
-    puntos_derrape = analizarZonasCriticas(R, x_track, coefs);
+    puntos_riesgo = analizarZonasCriticas(R, x_track, coefs);
+
+    generarPlanosFinales(coefs, x_track, puntos_riesgo, ...
+                         10, 50, ...    % Zona 1 (inicio, fin)
+                         241, 280);     % Zona 2 (inicio, fin)
+    disp("Reporte y Gráficas Generados Exitosamente.");
     
 end
 
