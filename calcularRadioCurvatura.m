@@ -1,4 +1,4 @@
-function [R, dy, y_track] = calcularRadioCurvatura(coefs, x_vals)
+function [R] = calcularRadioCurvatura(coefs, x_vals)
     % Derivar
     d1_coefs = polyder(coefs);   
     d2_coefs = polyder(d1_coefs);
@@ -11,3 +11,4 @@ function [R, dy, y_track] = calcularRadioCurvatura(coefs, x_vals)
     % Calcular Radio formula que nos dio el profe
     R = ((1 + dy.^2).^(3/2)) ./ abs(d2);
 end
+

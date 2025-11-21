@@ -50,6 +50,12 @@ function puntos_riesgo = analizarZonasCriticas(R, x_track, coefs)
         idx_global = idx_start + idx_local - 1;
         x_derrape = x_track(idx_global);
         y_derrape = polyval(coefs, x_derrape);
+
+        % Ecuacion de tangente en el punto de derrape
+        obtenerRectaTangente(coefs, x_derrape);
+
+        % Calcular Ubicacion de gradas a 20 m
+        calcularExtremosGradas(coefs, x_start, x_end, 20);
         
         % Imprimir reporte (Cumple Puntos 8 y 9)
         fprintf('ZONA %d | Intervalo: [%.1f m - %.1f m]\n', k, x_start, x_end);
