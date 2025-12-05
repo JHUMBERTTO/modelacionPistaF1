@@ -1,57 +1,72 @@
 classdef F1_MVP_App < matlab.apps.AppBase
 
-    % =====================================================================
-    % PROPIEDADES (VARIABLES)
-    % =====================================================================
+    % ===========
+    % PROPIEDADES
+    % ===========
     properties (Access = public)
         UIFigure             matlab.ui.Figure
         GridLayout           matlab.ui.container.GridLayout
         
-        % --- PANEL IZQUIERDO (CONTROLES) ---
+        % --- PANEL IZQUIERDO ---
         LeftPanel            matlab.ui.container.Panel
         LblTitulo            matlab.ui.control.Label
+        
+        % 1. Velocidad
         LblVelocidad         matlab.ui.control.Label
-        LblPunto1            matlab.ui.control.Label
-        LblPunto2            matlab.ui.control.Label
         CampoVelocidad       matlab.ui.control.NumericEditField
+        
+        % 2. Masa
+        LblMasa              matlab.ui.control.Label
+        CampoMasa            matlab.ui.control.NumericEditField
+        
+        % 3. Aceleración Inicial
+        LblAcel              matlab.ui.control.Label
+        CampoAcel            matlab.ui.control.NumericEditField
+        
+        % 4. Tiempo de Aceleración
+        LblTiempoAcel        matlab.ui.control.Label
+        CampoTiempoAcel      matlab.ui.control.NumericEditField
+        
+        % Botones y Estado
         BtnIniciar           matlab.ui.control.Button
         LblEstado            matlab.ui.control.Label
         TextAreaInfo         matlab.ui.control.TextArea
         
-        % --- ÁREA DERECHA (VISUALIZACIÓN) ---
+        % --- ÁREA DERECHA ---
         AxPista              matlab.ui.control.UIAxes
         
         % --- VARIABLES MATEMÁTICAS ---
         Coefs double
         Points double = [10 290; 110 250; 140 200; 280 120];
-        Mass = 798;
-        Mu = 0.8;
-        G = 9.81;
-        Theta = 3; % Grados
         
-        % Control de Flujo
+        % Física
+        Mu = 0.8;       % Fricción Lateral (Curvas)
+        Mu_Roll = 0.15; % Resistencia a la rodadura (Rectas)
+        G = 9.81;
+        Theta = 3;      % Grados de peralte
+        
         RunID double = 0; 
     end
 
-    % =====================================================================
-    % 2. LÓGICA DE LA APP (FUNCIONES)
-    % =====================================================================
+    % ==================
+    % LOGICA (FUNCIONES)
+    % ==================
     methods (Access = private)
         
         function startupFcn(app)
-            % 1. Calcular Matemática
+            % 1. Calcular Pista
             [a,b,c,d] = calcularIncognitas(app.Points);
             app.Coefs = [a b c d];
             
             x = 10:0.5:280;
             y = polyval(app.Coefs, x);
             
-            % 2. Dibujar Pista Base
+            % 2. Dibujar Pista
             plot(app.AxPista, x, y, 'Color', 'k', 'LineWidth', 8); 
             hold(app.AxPista, 'on');
             plot(app.AxPista, x, y, 'w--', 'LineWidth', 1);
             
-            % 3. Zonas Rojas (Visualización estática)
+            % Zonas Rojas
             try
                 R = calcularRadioCurvatura(app.Coefs, x);
                 idx_bad = find(R < 50);
@@ -64,31 +79,55 @@ classdef F1_MVP_App < matlab.apps.AppBase
             
             axis(app.AxPista, 'equal');
             grid(app.AxPista, 'on');
-            title(app.AxPista, 'Simulación: HUD & Euler', 'Color', 'k');
-
+            title(app.AxPista, 'Simulación: Pista', 'Color', 'k');
             app.AxPista.BackgroundColor = 'w';
-            app.AxPista.Box = 'on';
+
+            % --- LAYOUT MANUAL (Posiciones) ---
+            app.LblTitulo.Position = [20 560 200 30];
+            
+            app.LblVelocidad.Position = [20 530 200 20];
+            app.CampoVelocidad.Position = [20 510 100 25];
+            
+            app.LblMasa.Position = [20 480 200 20];
+            app.CampoMasa.Position = [20 460 100 25];
+            
+            app.LblAcel.Position = [20 430 200 20];
+            app.CampoAcel.Position = [20 410 100 25];
+            
+            app.LblTiempoAcel.Position = [130 430 100 20];
+            app.CampoTiempoAcel.Position = [130 410 80 25];
+
+            app.BtnIniciar.Position = [20 350 210 40];
+            app.LblEstado.Position = [20 310 210 30];
+            app.TextAreaInfo.Position = [20 20 210 280];
         end
         
-        % --- BOTÓN INICIAR CON HUD DE FÍSICA ---
-        % --- BOTÓN INICIAR CORREGIDO ---
+        % --- BOTÓN INICIAR ---
         function iniciarTrayectoria(app, varargin)
-            % 1. Configurar Interfaz
+            % Reset
             app.RunID = app.RunID + 1;
             myLocalID = app.RunID;
-            
-            app.BtnIniciar.Text = '🛑 DETENER / REINICIAR';
-            app.BtnIniciar.BackgroundColor = [1 0.2 0.2]; % Rojo suave
-            app.LblEstado.Text = "Calculando Físicas... 📊";
-            app.LblEstado.FontColor = [0 0.4 1]; 
-            
+            app.BtnIniciar.Text = 'Reiniciar';
+            app.BtnIniciar.BackgroundColor = [1 0.2 0.2];
+            app.LblEstado.Text = "En Pista...";
+            app.LblEstado.FontColor = 'k'; 
             delete(findobj(app.AxPista, 'Tag', 'movil'));
             
-            % 2. Obtener Inputs
+            % 1. LEER INPUTS
             v_kmh = app.CampoVelocidad.Value;
             v_ms = v_kmh / 3.6; 
+            masa_actual = app.CampoMasa.Value;
             
-            % 3. Cargar Imagen
+            % Configuramos la aceleración inicial desde los inputs
+            acc_user_input = app.CampoAcel.Value;    
+            acc_duration   = app.CampoTiempoAcel.Value; 
+            acc_timer      = 0; 
+            
+            % Variables Lógicas
+            estaba_en_recta = false; 
+            umbral_recta = 150; 
+            
+            % Cargar Imagen
             try
                 raw_img = imread('car.png');
                 car_img = imresize(raw_img, [40, NaN]);
@@ -98,99 +137,145 @@ classdef F1_MVP_App < matlab.apps.AppBase
             end
             w = 15; h = 8;
             
-            % 4. Inicialización Matemática
+            % Derivadas
             d1_coefs = polyder(app.Coefs);
             d2_coefs = polyder(d1_coefs);
             
-            dt = 0.05; % Paso de tiempo
+            % Simulación
+            dt = 0.05; 
             x_curr = 10;
             y_curr = polyval(app.Coefs, x_curr);
             
-            % --- VARIABLES ACUMULADORAS (HUD) ---
-            dist_total = 0;     % Metros recorridos
-            time_total = 0;     % Segundos transcurridos
-            heat_total = 0;     % Joules (Calor por fricción)
-            
-            % Energía Inicial
-            K_initial = 0.5 * app.Mass * v_ms^2;
+            % ACUMULADORES
+            dist_total = 0; 
+            time_total = 0; 
+            heat_total = 0;     
+            K_initial = 0.5 * masa_actual * v_ms^2;
             
             hold(app.AxPista, 'on');
-            carrito = image(app.AxPista, ...
-                'CData', car_img, ...
+            carrito = image(app.AxPista, 'CData', car_img, ...
                 'XData', [x_curr-w/2, x_curr+w/2], ... 
-                'YData', [y_curr-h/2, y_curr+h/2], ... 
-                'Tag', 'movil'); 
+                'YData', [y_curr-h/2, y_curr+h/2], 'Tag', 'movil'); 
             app.AxPista.YDir = 'normal';
-            
             crashed = false;
             
-            % =============================================================
-            % BUCLE DE EULER + HUD
-            % =============================================================
+            % ===================
+            % BUCLE PRINCIPAL
+            % ===================
             while x_curr < 280
                 if app.RunID ~= myLocalID, return; end
                 
-                % A. Geometría
                 yp  = polyval(d1_coefs, x_curr);
                 ypp = polyval(d2_coefs, x_curr);
-                angulo_rad = atan(yp);
                 
-                % B. Euler (Cinemática)
+                % Radio de Curvatura
+                R_val = (1 + yp^2)^1.5 / abs(ypp);
+                es_recta_ahora = R_val > umbral_recta;
+                
+                % --- DETECCIÓN DE RECTA ---
+                % Si acabamos de entrar a una recta (Rising Edge)
+                if es_recta_ahora && ~estaba_en_recta
+                    app.LblEstado.FontColor = [0 0.6 0]; % Verde
+                    drawnow;
+                    
+                    % Preguntar SIEMPRE al entrar a recta
+                    prompt = {
+                        sprintf('¡Entrada a Recta!\nVelocidad: %.1f km/h.\nNueva Aceleración (m/s²):', v_ms*3.6), ...
+                        'Duración (s):'
+                    };
+                    answer = inputdlg(prompt, 'Control de Motor', [1 50], {'2.0', '3.0'});
+                    
+                    if ~isempty(answer)
+                        acc_new = str2double(answer{1});
+                        dur_new = str2double(answer{2});
+                        if ~isnan(acc_new) && ~isnan(dur_new)
+                            acc_user_input = acc_new;
+                            acc_duration = dur_new;
+                            acc_timer = 0; % Reiniciar timer
+                        end
+                    end
+                end
+                
+                % --- DETECCIÓN DE CURVA ---
+                if ~es_recta_ahora && estaba_en_recta
+                    app.LblEstado.Text = "Precaución: CURVA";
+                    app.LblEstado.FontColor = [1 0.5 0]; % Naranja
+                    
+                    % SEGURIDAD: Cortar aceleración al entrar a curva
+                    acc_user_input = 0; 
+                end
+                
+                estaba_en_recta = es_recta_ahora;
+                
+                % --- FISICA: ACELERACIÓN VS FRICCIÓN ---
+                acc_aplicada = 0;
+                
+                % Caso 1: Motor Empujando (Usuario definió aceleración y hay tiempo restante)
+                if acc_user_input > 0 && acc_timer < acc_duration
+                    acc_aplicada = acc_user_input;
+                    acc_timer = acc_timer + dt;
+                    txt_hud = sprintf("(Acel: %.1fs)", acc_duration - acc_timer);
+                
+                % Caso 2: Rodadura (Fricción Natural)
+                else
+                    acc_aplicada = - (app.Mu_Roll * app.G); 
+                    txt_hud = "(Inercia/Fricción)";
+                    if v_ms <= 0.1, acc_aplicada = 0; v_ms = 0; txt_hud = "(Detenido)"; end
+                end
+                
+                % Euler: Velocidad
+                v_ms = v_ms + (acc_aplicada * dt);
+                if v_ms < 0, v_ms = 0; end
+                
+                % Cinemática
+                angulo_rad = atan(yp);
                 vx = v_ms * cos(angulo_rad);
                 vy = v_ms * sin(angulo_rad);
                 
                 x_next = x_curr + vx * dt;
                 y_next = y_curr + vy * dt;
-                y_next = polyval(app.Coefs, x_next); % Ajuste al riel
+                y_next = polyval(app.Coefs, x_next); 
                 
-                % C. Físicas
-                dx = x_next - x_curr;
-                dy = y_next - y_curr;
+                dx = x_next - x_curr; dy = y_next - y_curr;
                 dist_step = sqrt(dx^2 + dy^2);
-                
                 dist_total = dist_total + dist_step;
                 time_total = time_total + dt;
                 
-                % Radio y Límites
-                R_val = (1 + yp^2)^1.5 / abs(ypp);
+                % Energía y Calor
+                K_curr = 0.5 * masa_actual * v_ms^2;
+                delta_E_mech = K_curr - K_initial;
                 
-                % Energía
-                K_curr = 0.5 * app.Mass * v_ms^2;
-                delta_E_mech = K_curr - K_initial; 
-                
-                % Calor (Q = Work fricción)
-                f_fric = app.Mu * app.Mass * app.G;
+                f_fric = app.Mu * masa_actual * app.G; 
                 heat_step = f_fric * dist_step;
                 heat_total = heat_total + heat_step;
                 
-                % Vel Max
+                % Límite Físico (Derrape)
                 th = deg2rad(app.Theta);
                 num = sin(th) + app.Mu * cos(th);
                 den = cos(th) - app.Mu * sin(th);
                 if den <= 0, den = 0.001; end
                 V_max = sqrt(R_val * app.G * (num/den));
                 
-                % --- D. ACTUALIZAR HUD (SOLUCIÓN DEL ERROR) ---
-                % Usamos string(...) para convertir todo explícitamente a String Array
+                % --- HUD ---
                 infoText = [
-                    "📊 TELEMETRÍA EN VIVO";
+                    "DATOS DE TELEMETRÍA";
                     "--------------------";
-                    string(sprintf("⏱️ Tiempo: %.2f s", time_total));
-                    string(sprintf("📍 Distancia: %.1f m", dist_total));
+                    string(sprintf("Masa: %.0f kg", masa_actual));
+                    string(sprintf("Tiempo: %.2f s", time_total));
+                    string(sprintf("Distancia Recorrida: %.1f m", dist_total));
                     " ";
-                    string(sprintf("🚀 Vel. Actual: %.1f km/h", v_kmh));
-                    string(sprintf("⚠️ Vel. Máx: %.1f km/h", V_max * 3.6));
-                    string(sprintf("🔄 Radio: %.1f m", R_val));
+                    string(sprintf("Velocidad: %.1f km/h", v_ms*3.6));
+                    string(txt_hud);
+                    string(sprintf("Límite de Velocidad: %.1f km/h", V_max*3.6));
+                    string(sprintf("Radio de Curvatura: %.1f m", R_val));
                     " ";
-                    "⚡ ENERGÍA & CALOR";
-                    string(sprintf("🔥 Calor (Q): %.2f kJ", heat_total/1000));
-                    string(sprintf("🔋 E. Cinética: %.2f kJ", K_curr/1000));
-                    string(sprintf("cj ΔE Mecánica: %.2f J", delta_E_mech));
+                    string(sprintf("Calor (Q): %.2f kJ", heat_total/1000));
+                    string(sprintf("E.Cinetica: %.2f kJ", K_curr/1000));
+                    string(sprintf("ΔE Mecanica: %.2f J", delta_E_mech));
                 ];
-                
                 app.TextAreaInfo.Value = infoText;
 
-                % E. Gráficos
+                % Render
                 try
                     carrito.CData = imrotate(car_img, rad2deg(angulo_rad), 'crop');
                 catch
@@ -198,118 +283,142 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 carrito.XData = [x_next - w/2, x_next + w/2];
                 carrito.YData = [y_next - h/2, y_next + h/2];
                 
-                % F. Check de Derrape
+                % --- CRASH CHECK & ANIMACIÓN ---
                 if v_ms > V_max
                     crashed = true;
-                    app.LblEstado.Text = "¡DERRAPE! 💥";
+                    app.LblEstado.Text = "¡DERRAPE!";
+                    app.LblEstado.FontColor = 'r';
                     
-                    v_dir = [vx, vy]; u_dir = v_dir/norm(v_dir);
+                    % Vector tangente unitario
+                    v_dir = [vx, vy]; 
+                    if norm(v_dir) == 0, v_dir=[1,0]; end
+                    u_dir = v_dir / norm(v_dir);
+                    
                     p_curr = [x_next, y_next];
-                    for k = 1:15
-                        if app.RunID ~= myLocalID, return; end
-                        p_next = p_curr + u_dir * (k*2);
-                        carrito.XData = [p_next(1)-w/2, p_next(1)+w/2];
-                        carrito.YData = [p_next(2)-h/2, p_next(2)+h/2];
-                        plot(app.AxPista, p_next(1), p_next(2), 'rx');
-                        drawnow; pause(0.02);
-                    end
                     
-                    % Concatenamos el mensaje de error al arreglo de strings existente
-                    app.TextAreaInfo.Value = [infoText; " "; "❌ FUERZA G EXCESIVA"];
-                    break;
+                    % Bucle de animación de salida de pista
+                    for k = 1:15
+                         if app.RunID ~= myLocalID, return; end
+                         
+                         p_next = p_curr + u_dir * (k*2.5);
+                         
+                         % Mover coche
+                         carrito.XData = [p_next(1)-w/2, p_next(1)+w/2];
+                         carrito.YData = [p_next(2)-h/2, p_next(2)+h/2];
+                         
+                         % Dibujar rastro
+                         plot(app.AxPista, p_next(1), p_next(2), 'rx', 'LineWidth', 2);
+                         
+                         drawnow; 
+                         pause(0.02);
+                    end
+                    break; % Fin de simulación por choque
+                end
+                
+                % Stop Check
+                if v_ms <= 0 && time_total > 2
+                     app.LblEstado.Text = "Auto Detenido";
+                     app.LblEstado.FontColor = 'k';
+                     break;
                 end
                 
                 x_curr = x_next;
                 y_curr = y_next;
-                
                 drawnow;
                 pause(0.01); 
             end
             
-            if ~crashed && app.RunID == myLocalID
-                app.LblEstado.Text = "Finalizado ✅";
-                app.BtnIniciar.Text = '▶ NUEVA CARRERA';
+            if ~crashed && v_ms > 0 && app.RunID == myLocalID
+                app.LblEstado.Text = "Meta Alcanzada";
+                app.LblEstado.FontColor = 'k';
+                app.BtnIniciar.Text = '▶';
                 app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; 
             end
         end
     end
 
-    % =====================================================================
-    % 3. DISEÑO VISUAL (LAYOUT) - SIN CAMBIOS
-    % =====================================================================
+    % =========
+    % LAYOUT
+    % =========
     methods (Access = public)
         function app = F1_MVP_App
-            % Ventana Principal
-            app.UIFigure = uifigure('Name', 'F1 MVP Simulator (Euler)', 'Position', [100 100 900 600], 'Color', 'w');
-            
+            app.UIFigure = uifigure('Name', 'F1 Dynamics', 'Position', [100 100 950 600], 'Color', 'w');
             app.GridLayout = uigridlayout(app.UIFigure);
-            app.GridLayout.ColumnWidth = {250, '1x'};
+            app.GridLayout.ColumnWidth = {260, '1x'};
             app.GridLayout.RowHeight = {'1x'};
             app.GridLayout.BackgroundColor = 'w';
             
-            % --- PANEL IZQUIERDO ---
+            % Left Panel
             app.LeftPanel = uipanel(app.GridLayout);
-            app.LeftPanel.Layout.Row = 1;
-            app.LeftPanel.Layout.Column = 1;
+            app.LeftPanel.Layout.Row = 1; app.LeftPanel.Layout.Column = 1;
             app.LeftPanel.BackgroundColor = 'w';
             app.LeftPanel.BorderType = 'line';
-            app.LeftPanel.BorderWidth = 1;
             
             app.LblTitulo = uilabel(app.LeftPanel);
-            app.LblTitulo.Position = [20 540 200 30];
             app.LblTitulo.Text = 'CONFIGURACIÓN';
-            app.LblTitulo.FontSize = 18; 
-            app.LblTitulo.FontWeight = 'bold';
+            app.LblTitulo.FontSize = 18; app.LblTitulo.FontWeight = 'bold';
             app.LblTitulo.FontColor = 'k'; 
             
+            % --- VELOCIDAD ---
             app.LblVelocidad = uilabel(app.LeftPanel);
-            app.LblVelocidad.Position = [20 480 200 22];
-            app.LblVelocidad.Text = 'Velocidad (km/h):';
-            app.LblVelocidad.FontWeight = 'bold';
-            app.LblVelocidad.FontColor = 'k';
-
-            app.CampoVelocidad = uieditfield(app.LeftPanel, 'numeric');
-            app.CampoVelocidad.Position = [20 450 100 30];
-            app.CampoVelocidad.Value = 100;
-            app.CampoVelocidad.FontSize = 14;
-            app.CampoVelocidad.FontColor = 'k';
-            app.CampoVelocidad.BackgroundColor = [0.95 0.95 0.95]; 
+            app.LblVelocidad.Text = 'Vel. Inicial (km/h):';
+            app.LblVelocidad.FontWeight = 'bold'; app.LblVelocidad.FontColor = 'k'; 
             
+            app.CampoVelocidad = uieditfield(app.LeftPanel, 'numeric');
+            app.CampoVelocidad.Value = 30; 
+            app.CampoVelocidad.BackgroundColor = [0.95 0.95 0.95];
+            app.CampoVelocidad.FontColor = 'k'; 
+            
+            % --- MASA ---
+            app.LblMasa = uilabel(app.LeftPanel);
+            app.LblMasa.Text = 'Masa (kg):';
+            app.LblMasa.FontWeight = 'bold'; app.LblMasa.FontColor = 'k'; 
+            
+            app.CampoMasa = uieditfield(app.LeftPanel, 'numeric');
+            app.CampoMasa.Value = 798; 
+            app.CampoMasa.BackgroundColor = [0.95 0.95 0.95];
+            app.CampoMasa.FontColor = 'k'; 
+            
+            % --- ACELERACION INICIAL ---
+            app.LblAcel = uilabel(app.LeftPanel);
+            app.LblAcel.Text = 'Acel. Inicial (m/s²):';
+            app.LblAcel.FontWeight = 'bold'; app.LblAcel.FontColor = 'k'; 
+            
+            app.CampoAcel = uieditfield(app.LeftPanel, 'numeric');
+            app.CampoAcel.Value = 0; 
+            app.CampoAcel.BackgroundColor = [0.95 0.95 0.95];
+            app.CampoAcel.FontColor = 'k'; 
+            
+            % --- TIEMPO ACEL ---
+            app.LblTiempoAcel = uilabel(app.LeftPanel);
+            app.LblTiempoAcel.Text = 'Duración (s):';
+            app.LblTiempoAcel.FontWeight = 'bold'; app.LblTiempoAcel.FontColor = 'k'; 
+            
+            app.CampoTiempoAcel = uieditfield(app.LeftPanel, 'numeric');
+            app.CampoTiempoAcel.Value = 0; 
+            app.CampoTiempoAcel.BackgroundColor = [0.95 0.95 0.95];
+            app.CampoTiempoAcel.FontColor = 'k'; 
+            
+            % UI Standard
             app.BtnIniciar = uibutton(app.LeftPanel, 'push');
-            app.BtnIniciar.Position = [20 380 210 50];
-            app.BtnIniciar.Text = '▶ INICIAR TRAYECTORIA';
-            app.BtnIniciar.FontSize = 14; 
-            app.BtnIniciar.FontWeight = 'bold';
-            app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; 
-            app.BtnIniciar.FontColor = 'w'; 
+            app.BtnIniciar.Text = '▶ INICIAR';
+            app.BtnIniciar.FontSize = 14; app.BtnIniciar.FontWeight = 'bold';
+            app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; app.BtnIniciar.FontColor = 'w';
             app.BtnIniciar.ButtonPushedFcn = @app.iniciarTrayectoria;
             
             app.LblEstado = uilabel(app.LeftPanel);
-            app.LblEstado.Position = [20 320 210 30];
-            app.LblEstado.Text = 'Estado: Esperando...';
-            app.LblEstado.FontSize = 14; 
-            app.LblEstado.FontWeight = 'bold';
-            app.LblEstado.FontColor = 'k';
+            app.LblEstado.Text = 'Listo';
+            app.LblEstado.FontSize = 14; app.LblEstado.FontWeight = 'bold'; app.LblEstado.FontColor = 'k'; 
             
             app.TextAreaInfo = uitextarea(app.LeftPanel);
-            app.TextAreaInfo.Position = [20 50 210 250];
             app.TextAreaInfo.Editable = 'off';
-            app.TextAreaInfo.Value = {'Ingresa una velocidad'; 'y presiona iniciar.'};
-            app.TextAreaInfo.BackgroundColor = 'w';
-            app.TextAreaInfo.FontColor = 'k';
-            app.TextAreaInfo.FontSize = 12;
+            app.TextAreaInfo.BackgroundColor = 'w'; app.TextAreaInfo.FontColor = 'k'; 
             
-            % --- ÁREA DERECHA ---
+            % Right Panel
             app.AxPista = uiaxes(app.GridLayout);
-            app.AxPista.Layout.Row = 1;
-            app.AxPista.Layout.Column = 2;
-            app.AxPista.Title.String = 'Vista de Pista';
-            app.AxPista.Title.FontSize = 16;
-            app.AxPista.Title.FontWeight = 'bold';
+            app.AxPista.Layout.Row = 1; app.AxPista.Layout.Column = 2;
             app.AxPista.BackgroundColor = 'w';
-            app.AxPista.XColor = 'k'; 
-            app.AxPista.YColor = 'k';
-            app.AxPista.GridColor = [0.8 0.8 0.8];
+            app.AxPista.XColor = 'k'; app.AxPista.YColor = 'k';
             
             app.startupFcn();
         end
