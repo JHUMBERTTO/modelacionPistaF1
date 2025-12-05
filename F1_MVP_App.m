@@ -173,7 +173,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
             
             axis(app.AxPista, 'equal');
             grid(app.AxPista, 'on');
-            title(app.AxPista, 'Simulación: Pista Configurada', 'Color', 'k');
+            title(app.AxPista, 'Simulación: Pista y Vehiculo de F1', 'Color', 'k');
             app.AxPista.BackgroundColor = 'w';
 
             app.LblTitulo.Position = [20 560 200 30];
