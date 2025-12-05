@@ -11,19 +11,19 @@ classdef F1_MVP_App < matlab.apps.AppBase
         LeftPanel            matlab.ui.container.Panel
         LblTitulo            matlab.ui.control.Label
         
-        % 1. Velocidad
+        % Velocidad
         LblVelocidad         matlab.ui.control.Label
         CampoVelocidad       matlab.ui.control.NumericEditField
         
-        % 2. Masa
+        % Masa
         LblMasa              matlab.ui.control.Label
         CampoMasa            matlab.ui.control.NumericEditField
         
-        % 3. Aceleración Inicial
+        % Aceleracion Inicial
         LblAcel              matlab.ui.control.Label
         CampoAcel            matlab.ui.control.NumericEditField
         
-        % 4. Tiempo de Aceleración
+        % Tiempo de Aceleracion
         LblTiempoAcel        matlab.ui.control.Label
         CampoTiempoAcel      matlab.ui.control.NumericEditField
         
@@ -32,18 +32,21 @@ classdef F1_MVP_App < matlab.apps.AppBase
         LblEstado            matlab.ui.control.Label
         TextAreaInfo         matlab.ui.control.TextArea
         
-        % --- ÁREA DERECHA ---
+        % --- PISTA ---
         AxPista              matlab.ui.control.UIAxes
         
-        % --- VARIABLES MATEMÁTICAS ---
+        % --- PANEL DE SETUP PUNTOS ---
+        PanelSetup           matlab.ui.container.Panel
+        TxtPuntosInput       matlab.ui.control.TextArea
+        
         Coefs double
         Points double = [10 290; 110 250; 140 200; 280 120];
         
-        % Física
+        % Fisica
         Mu = 0.8;       % Fricción Lateral (Curvas)
         Mu_Roll = 0.15; % Resistencia a la rodadura (Rectas)
         G = 9.81;
-        Theta = 3;      % Grados de peralte
+        T = 3;      
         
         RunID double = 0; 
     end
@@ -52,21 +55,112 @@ classdef F1_MVP_App < matlab.apps.AppBase
     % LOGICA (FUNCIONES)
     % ==================
     methods (Access = private)
-        
+        function createSetupPanel(app)
+
+            % ==================
+            % DASHBOARD INICIAL
+            % ==================
+
+            app.PanelSetup = uipanel(app.GridLayout);
+            app.PanelSetup.Layout.Row = 1;
+            app.PanelSetup.Layout.Column = [1, 2]; 
+            app.PanelSetup.BackgroundColor = [0.9 0.9 0.95];
+            app.PanelSetup.Title = 'DISEÑADOR DE PISTA';
+            app.PanelSetup.ForegroundColor = 'k';
+            app.PanelSetup.FontSize = 16;
+            app.PanelSetup.FontWeight = 'bold';
+
+            
+            % Instrucciones
+            lbl = uilabel(app.PanelSetup);
+            lbl.Text = 'Ingrese los Puntos de Control [X Y] o seleccione un Preset:';
+            lbl.FontColor = 'k';
+            lbl.Position = [300 500 400 30];
+            lbl.HorizontalAlignment = 'center';
+            lbl.FontSize = 14;
+
+            app.TxtPuntosInput = uitextarea(app.PanelSetup);
+            app.TxtPuntosInput.Position = [300 350 400 140];
+            app.TxtPuntosInput.Value = mat2str(app.Points); % Valor por defecto
+            app.TxtPuntosInput.FontSize = 14;
+            
+            % Pista Balanceada
+            btnP1 = uibutton(app.PanelSetup, 'push');
+            btnP1.Text = 'Pista Balanceada (Recta)';
+            btnP1.Position = [325 250 200 40];
+            btnP1.ButtonPushedFcn = @(btn,event) app.cargarPreset([10 290; 110 250; 140 200; 280 120]);
+            
+            % Pista Curvas Cerradas
+            btnP2 = uibutton(app.PanelSetup, 'push');
+            btnP2.Text = 'Pista Técnica (Curvas)';
+            btnP2.Position = [500 250 200 40];
+            % Nota: Puntos que fuerzan curvas más agresivas
+            btnP2.ButtonPushedFcn = @(btn,event) app.cargarPreset([10 290; 80 150; 200 250; 280 120]);
+            
+            btnGo = uibutton(app.PanelSetup, 'push');
+            btnGo.Text = 'GENERAR PISTA Y ENTRAR';
+            btnGo.BackgroundColor = [0.2 0.6 0.2];
+            btnGo.FontColor = 'w';
+            btnGo.FontSize = 16;
+            btnGo.FontWeight = 'bold';
+            btnGo.Position = [350 150 300 60];
+            btnGo.ButtonPushedFcn = @app.confirmarPista;
+        end
+
+        function cargarPreset(app, puntos)
+            app.TxtPuntosInput.Value = mat2str(puntos);
+        end
+
+        % --- HELPER: CONFIRMAR Y DIBUJAR ---
+        function confirmarPista(app, varargin)
+            try
+                % 1. Leer texto y convertir a matriz
+                str = char(join(app.TxtPuntosInput.Value));
+                nuevos_puntos = str2num(str);
+                
+                % Validaciones básicas
+                if size(nuevos_puntos, 2) ~= 2 || size(nuevos_puntos, 1) < 3
+                    uialert(app.UIFigure, 'La matriz debe ser de al menos 3 filas y 2 columnas (X, Y).', 'Error de Formato');
+                    return;
+                end
+                
+                % 2. Asignar y limpiar
+                app.Points = nuevos_puntos;
+                cla(app.AxPista); % Limpiar ejes antes de dibujar
+                
+                % 3. Llamar a tu lógica original de dibujo
+                app.startupFcn();
+                
+                % 4. Ocultar panel de setup
+                app.PanelSetup.Visible = 'off';
+                
+            catch err
+                uialert(app.UIFigure, ['Error en los puntos: ' err.message], 'Error');
+            end
+        end
+
+        % --- TU FUNCION ORIGINAL (Ligeramente adaptada para limpiar antes) ---
         function startupFcn(app)
-            % 1. Calcular Pista
+            % Calcular Pista
             [a,b,c,d] = calcularIncognitas(app.Points);
             app.Coefs = [a b c d];
             
-            x = 10:0.5:280;
+            % Rango dinámico basado en los puntos del usuario
+            x_min = min(app.Points(:,1));
+            x_max = max(app.Points(:,1));
+            x = x_min:0.5:x_max;
+            
             y = polyval(app.Coefs, x);
             
-            % 2. Dibujar Pista
+            % Dibujar Pista
             plot(app.AxPista, x, y, 'Color', 'k', 'LineWidth', 8); 
             hold(app.AxPista, 'on');
             plot(app.AxPista, x, y, 'w--', 'LineWidth', 1);
             
-            % Zonas Rojas
+            % Dibujar los puntos de control para referencia visual
+            plot(app.AxPista, app.Points(:,1), app.Points(:,2), 'bo', 'MarkerFaceColor', 'b');
+            
+            % Zonas Rojas Riesgo
             try
                 R = calcularRadioCurvatura(app.Coefs, x);
                 idx_bad = find(R < 50);
@@ -79,10 +173,9 @@ classdef F1_MVP_App < matlab.apps.AppBase
             
             axis(app.AxPista, 'equal');
             grid(app.AxPista, 'on');
-            title(app.AxPista, 'Simulación: Pista', 'Color', 'k');
+            title(app.AxPista, 'Simulación: Pista Configurada', 'Color', 'k');
             app.AxPista.BackgroundColor = 'w';
 
-            % --- LAYOUT MANUAL (Posiciones) ---
             app.LblTitulo.Position = [20 560 200 30];
             
             app.LblVelocidad.Position = [20 530 200 20];
@@ -102,7 +195,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.TextAreaInfo.Position = [20 20 210 280];
         end
         
-        % --- BOTÓN INICIAR ---
+        % --- INICIAR TRAYECTORIA---
         function iniciarTrayectoria(app, varargin)
             % Reset
             app.RunID = app.RunID + 1;
@@ -113,17 +206,17 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.LblEstado.FontColor = 'k'; 
             delete(findobj(app.AxPista, 'Tag', 'movil'));
             
-            % 1. LEER INPUTS
+            % leer inputs
             v_kmh = app.CampoVelocidad.Value;
             v_ms = v_kmh / 3.6; 
             masa_actual = app.CampoMasa.Value;
             
-            % Configuramos la aceleración inicial desde los inputs
+            % Configuramos la aceleracion inicial desde los inputs
             acc_user_input = app.CampoAcel.Value;    
             acc_duration   = app.CampoTiempoAcel.Value; 
             acc_timer      = 0; 
             
-            % Variables Lógicas
+            % Variables Logicas
             estaba_en_recta = false; 
             umbral_recta = 150; 
             
@@ -143,7 +236,10 @@ classdef F1_MVP_App < matlab.apps.AppBase
             
             % Simulación
             dt = 0.05; 
-            x_curr = 10;
+            % PUNTO DE INICIO DINÁMICO (Basado en el primer punto del usuario)
+            x_curr = app.Points(1,1);
+            x_limit = app.Points(end,1);
+            
             y_curr = polyval(app.Coefs, x_curr);
             
             % ACUMULADORES
@@ -162,7 +258,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
             % ===================
             % BUCLE PRINCIPAL
             % ===================
-            while x_curr < 280
+            while x_curr < x_limit
                 if app.RunID ~= myLocalID, return; end
                 
                 yp  = polyval(d1_coefs, x_curr);
@@ -173,9 +269,9 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 es_recta_ahora = R_val > umbral_recta;
                 
                 % --- DETECCIÓN DE RECTA ---
-                % Si acabamos de entrar a una recta (Rising Edge)
+                
                 if es_recta_ahora && ~estaba_en_recta
-                    app.LblEstado.FontColor = [0 0.6 0]; % Verde
+                    app.LblEstado.FontColor = [0 0.6 0];
                     drawnow;
                     
                     % Preguntar SIEMPRE al entrar a recta
@@ -191,7 +287,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
                         if ~isnan(acc_new) && ~isnan(dur_new)
                             acc_user_input = acc_new;
                             acc_duration = dur_new;
-                            acc_timer = 0; % Reiniciar timer
+                            acc_timer = 0;
                         end
                     end
                 end
@@ -199,31 +295,31 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 % --- DETECCIÓN DE CURVA ---
                 if ~es_recta_ahora && estaba_en_recta
                     app.LblEstado.Text = "Precaución: CURVA";
-                    app.LblEstado.FontColor = [1 0.5 0]; % Naranja
+                    app.LblEstado.FontColor = [1 0.5 0];
                     
-                    % SEGURIDAD: Cortar aceleración al entrar a curva
+                    % Cortar aceleración al entrar a curva
                     acc_user_input = 0; 
                 end
                 
                 estaba_en_recta = es_recta_ahora;
                 
-                % --- FISICA: ACELERACIÓN VS FRICCIÓN ---
-                acc_aplicada = 0;
-                
-                % Caso 1: Motor Empujando (Usuario definió aceleración y hay tiempo restante)
+                % Motor Empujando (Usuario definió aceleración y hay tiempo restante)
                 if acc_user_input > 0 && acc_timer < acc_duration
                     acc_aplicada = acc_user_input;
                     acc_timer = acc_timer + dt;
                     txt_hud = sprintf("(Acel: %.1fs)", acc_duration - acc_timer);
                 
-                % Caso 2: Rodadura (Fricción Natural)
+                % Rodadura (Fricción Natural)
                 else
                     acc_aplicada = - (app.Mu_Roll * app.G); 
                     txt_hud = "(Inercia/Fricción)";
                     if v_ms <= 0.1, acc_aplicada = 0; v_ms = 0; txt_hud = "(Detenido)"; end
                 end
                 
-                % Euler: Velocidad
+                % ============
+                % Euler Method
+                % ============
+
                 v_ms = v_ms + (acc_aplicada * dt);
                 if v_ms < 0, v_ms = 0; end
                 
@@ -250,7 +346,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 heat_total = heat_total + heat_step;
                 
                 % Límite Físico (Derrape)
-                th = deg2rad(app.Theta);
+                th = deg2rad(app.T);
                 num = sin(th) + app.Mu * cos(th);
                 den = cos(th) - app.Mu * sin(th);
                 if den <= 0, den = 0.001; end
@@ -283,7 +379,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 carrito.XData = [x_next - w/2, x_next + w/2];
                 carrito.YData = [y_next - h/2, y_next + h/2];
                 
-                % --- CRASH CHECK & ANIMACIÓN ---
+                % --- CRASH CHECK ---
                 if v_ms > V_max
                     crashed = true;
                     app.LblEstado.Text = "¡DERRAPE!";
@@ -312,7 +408,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
                          drawnow; 
                          pause(0.02);
                     end
-                    break; % Fin de simulación por choque
+                    break;
                 end
                 
                 % Stop Check
@@ -420,7 +516,8 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.AxPista.BackgroundColor = 'w';
             app.AxPista.XColor = 'k'; app.AxPista.YColor = 'k';
             
-            app.startupFcn();
+            % --- CAMBIO: LLAMAR PANEL DE SETUP EN VEZ DE DIBUJAR DIRECTO ---
+            app.createSetupPanel();
         end
     end 
 end
