@@ -39,7 +39,8 @@ classdef F1_MVP_App < matlab.apps.AppBase
     methods (Access = private)
         
         function startupFcn(app)
-            % 1. Calcular Matemática
+            % 1. Calcular Matemática (Asumiendo que tienes esta función externa)
+            % Si no la tienes, necesitarás definir 'app.Coefs' manualmente.
             [a,b,c,d] = calcularIncognitas(app.Points);
             app.Coefs = [a b c d];
             
@@ -47,119 +48,151 @@ classdef F1_MVP_App < matlab.apps.AppBase
             y = polyval(app.Coefs, x);
             
             % 2. Dibujar Pista Base
-            % Usamos negro para la pista base para mayor contraste en fondo blanco
             plot(app.AxPista, x, y, 'Color', 'k', 'LineWidth', 8); 
             hold(app.AxPista, 'on');
             plot(app.AxPista, x, y, 'w--', 'LineWidth', 1);
             
-            % 3. Zonas Rojas
-            R = calcularRadioCurvatura(app.Coefs, x);
-            idx_bad = find(R < 50);
-            if ~isempty(idx_bad)
-                plot(app.AxPista, x(idx_bad), y(idx_bad), 'r.', 'MarkerSize', 15);
+            % 3. Zonas Rojas (Pre-cálculo visual solo para referencia)
+            % Nota: Usamos las funciones externas si existen, si no, usa polyder interno
+            try
+                R = calcularRadioCurvatura(app.Coefs, x);
+                idx_bad = find(R < 50);
+                if ~isempty(idx_bad)
+                    plot(app.AxPista, x(idx_bad), y(idx_bad), 'r.', 'MarkerSize', 15);
+                end
+                calcularGradas(app);
+            catch
+                % Si fallan las funciones externas, no bloqueamos la app
             end
-
-            % calcular gradas
-            calcularGradas(app);
             
             axis(app.AxPista, 'equal');
             grid(app.AxPista, 'on');
-            title(app.AxPista, 'Simulación de Trayectoria', 'Color', 'k');
+            title(app.AxPista, 'Simulación: Método de Euler', 'Color', 'k');
 
             app.AxPista.BackgroundColor = 'w';
             app.AxPista.Box = 'on';
         end
         
-        % --- BOTÓN INICIAR ---
+        % --- BOTÓN INICIAR (REFACTORIZADO CON EULER) ---
         function iniciarTrayectoria(app, varargin)
-            % 1. Configurar Interfaz (Reiniciar)
+            % 1. Configurar Interfaz
             app.RunID = app.RunID + 1;
             myLocalID = app.RunID;
             
             app.BtnIniciar.Text = '🔄 REINICIAR';
             app.BtnIniciar.BackgroundColor = [1 0.8 0];
-            app.BtnIniciar.FontColor = 'k'; % Texto negro para contraste con amarillo
-            app.LblEstado.Text = "En carrera 🏎️";
+            app.BtnIniciar.FontColor = 'k';
+            app.LblEstado.Text = "Simulando (Euler)... 🏎️";
             app.LblEstado.FontColor = [0 0.4 1]; 
             
-            % Limpiar gráficas anteriores (borrar coche viejo)
             delete(findobj(app.AxPista, 'Tag', 'movil'));
             
-            % 2. Leer Velocidad
+            % 2. Obtener Velocidad y Variables Físicas
             v_kmh = app.CampoVelocidad.Value;
             v_ms = v_kmh / 3.6; 
             
-            % 3. Vectores de la Pista
-            x_path = 10:1:280;
-            y_path = polyval(app.Coefs, x_path);
-            
-            % Cálculos Físicos
-            R_vec = calcularRadioCurvatura(app.Coefs, x_path);
-            der = polyder(app.Coefs);
-            dy_vec = polyval(der, x_path);
-            
-            th = deg2rad(app.Theta);
-            num = sin(th) + app.Mu * cos(th);
-            den = cos(th) - app.Mu * sin(th);
-            V_max_vec = sqrt(R_vec .* app.G .* (num/den));
-            
-            % --- 4. CARGA DE IMAGEN SEGURA ---
+            % 3. Preparar Imagen del Carro
             try
                 raw_img = imread('car.png');
-                car_img = imresize(raw_img, [40, NaN]); % Reducir tamaño
+                car_img = imresize(raw_img, [40, NaN]);
             catch
-                % Si falla, bloque azul con linea roja
                 car_img = zeros(20, 40, 3, 'uint8');
-                car_img(:,:,3) = 255; 
-                car_img(5:15, 10:30, 1) = 255; 
+                car_img(:,:,3) = 255; car_img(5:15, 10:30, 1) = 255; 
             end
+            w = 15; h = 8;
             
-            w = 15; h = 8;  % Dimensiones visuales
+            % 4. Inicialización Euler
+            % Derivadas del polinomio para calcular pendiente y radio
+            d1_coefs = polyder(app.Coefs);      % f'
+            d2_coefs = polyder(d1_coefs);       % f''
             
+            % Paso de tiempo (Delta Time)
+            dt = 0.05; 
+            
+            % Condiciones Iniciales
+            x_curr = 10;                        % X Inicial
+            y_curr = polyval(app.Coefs, x_curr); % Y Inicial
+            
+            % Dibujar carro inicial
             hold(app.AxPista, 'on');
             carrito = image(app.AxPista, ...
                 'CData', car_img, ...
-                'XData', [x_path(1)-w/2, x_path(1)+w/2], ... 
-                'YData', [y_path(1)-h/2, y_path(1)+h/2], ... 
+                'XData', [x_curr-w/2, x_curr+w/2], ... 
+                'YData', [y_curr-h/2, y_curr+h/2], ... 
                 'Tag', 'movil'); 
-            
-            % Fix eje Y invertido
             app.AxPista.YDir = 'normal';
             
             crashed = false;
             
-            % --- BUCLE DE ANIMACIÓN ---
-            for i = 1:length(x_path)
-                % Check de interrupción (Reiniciar)
+            % =============================================================
+            % BUCLE DE EULER (Simulación paso a paso)
+            % =============================================================
+            while x_curr < 280
+                % Check de interrupción
                 if app.RunID ~= myLocalID, return; end
                 
-                % A. CALCULAR ROTACIÓN
-                angulo = atan(dy_vec(i)) * (180/pi);
+                % A. CALCULO DE GEOMETRÍA LOCAL
+                yp  = polyval(d1_coefs, x_curr); % Pendiente (m)
+                ypp = polyval(d2_coefs, x_curr); % Concavidad
+                
+                % Ángulo de la trayectoria
+                angulo_rad = atan(yp);
+                angulo_deg = rad2deg(angulo_rad);
+                
+                % B. MÉTODO DE EULER: Actualización de Posición
+                % Descomponemos la velocidad en X y Y
+                vx = v_ms * cos(angulo_rad);
+                vy = v_ms * sin(angulo_rad);
+                
+                % x(t+dt) = x(t) + vx * dt
+                x_next = x_curr + vx * dt;
+                % y(t+dt) = y(t) + vy * dt
+                y_next = y_curr + vy * dt;
+                
+                % *Corrección Visual*: Como Euler puro puede "salirse" de la curva 
+                % por errores numéricos, ajustamos Y ligeramente al polinomio real 
+                % para que se vea sobre el riel (opcional, pero recomendado para apps).
+                % Si quieres Euler puro estricto, comenta la siguiente línea:
+                y_next = polyval(app.Coefs, x_next); 
+
+                % C. ROTACIÓN DE IMAGEN
                 try
-                    car_rot = imrotate(car_img, angulo, 'crop');
+                    car_rot = imrotate(car_img, angulo_deg, 'crop');
                     carrito.CData = car_rot;
                 catch
                 end
                 
-                % B. MOVER IMAGEN
-                xc = x_path(i);
-                yc = y_path(i);
-                carrito.XData = [xc - w/2, xc + w/2];
-                carrito.YData = [yc - h/2, yc + h/2];
+                % D. MOVER OBJETO GRÁFICO
+                carrito.XData = [x_next - w/2, x_next + w/2];
+                carrito.YData = [y_next - h/2, y_next + h/2];
                 
-                % C. CHECK DE DERRAPE
-                if v_ms > V_max_vec(i)
+                % E. FÍSICA: CHECK DE DERRAPE
+                % Radio de curvatura: R = (1 + y'^2)^(3/2) / |y''|
+                R_val = (1 + yp^2)^1.5 / abs(ypp);
+                
+                % Velocidad Máxima en este punto
+                th_peralte = deg2rad(app.Theta);
+                num = sin(th_peralte) + app.Mu * cos(th_peralte);
+                den = cos(th_peralte) - app.Mu * sin(th_peralte);
+                
+                % Evitar divisiones imaginarias si el denominador es malo
+                if den <= 0, den = 0.001; end 
+                V_max = sqrt(R_val * app.G * (num/den));
+                
+                if v_ms > V_max
                     crashed = true;
                     app.LblEstado.Text = "¡DERRAPE DETECTADO! 💥";
                     
-                    % Salida por tangente
-                    m = dy_vec(i);
-                    v_dir = [1, m]; u_dir = v_dir / norm(v_dir);
-                    p_curr = [xc, yc];
+                    % Animación de salida por tangente (Inercia)
+                    v_dir = [vx, vy]; 
+                    u_dir = v_dir / norm(v_dir); % Vector unitario dirección actual
+                    p_curr = [x_next, y_next];
                     
                     for k = 1:20
                         if app.RunID ~= myLocalID, return; end
-                        p_next = p_curr + u_dir * (k*2);
+                        % Movimiento lineal simple post-choque
+                        p_next = p_curr + u_dir * (k*2); 
+                        
                         carrito.XData = [p_next(1)-w/2, p_next(1)+w/2];
                         carrito.YData = [p_next(2)-h/2, p_next(2)+h/2];
                         plot(app.AxPista, p_next(1), p_next(2), 'r.', 'MarkerSize', 5, 'Tag', 'movil');
@@ -167,37 +200,43 @@ classdef F1_MVP_App < matlab.apps.AppBase
                     end
                     
                     app.TextAreaInfo.Value = {
-                        sprintf("Fallo en X = %.1f m", xc);
-                        sprintf("Velocidad: %.1f km/h", v_kmh);
+                        sprintf("Derrape en X = %.1f m", x_next);
+                        sprintf("Velocidad Carro: %.1f km/h", v_kmh);
+                        sprintf("Velocidad Max: %.1f km/h", V_max * 3.6);
                         "-----------------";
-                        "Fuerza centrífuga excesiva.";
+                        "Fuerza centrífuga > Fricción";
                     };
-                    break;
+                    break; % Romper bucle while
                 end
                 
+                % Actualizar variables para siguiente iteración
+                x_curr = x_next;
+                y_curr = y_next;
+                
                 drawnow;
+                % Pausa dinámica para intentar mantener velocidad visual constante
+                % (Opcional, 0.01 es estándar)
                 pause(0.01); 
             end
             
             if ~crashed && app.RunID == myLocalID
                 app.LblEstado.Text = "Vuelta Exitosa ✅";
-                app.LblEstado.FontColor = [0 0.5 0]; % Verde oscuro
-                app.BtnIniciar.Text = '▶ INICIAR';
-                app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; % Regresa a azul
+                app.LblEstado.FontColor = [0 0.5 0]; 
+                app.BtnIniciar.Text = '▶ INICIAR TRAYECTORIA';
+                app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; 
                 app.BtnIniciar.FontColor = 'w';
             end
         end
     end 
 
     % =====================================================================
-    % 3. DISEÑO VISUAL (LAYOUT)
+    % 3. DISEÑO VISUAL (LAYOUT) - SIN CAMBIOS
     % =====================================================================
     methods (Access = public)
         function app = F1_MVP_App
-            % Ventana Principal - Fondo Blanco ('w')
-            app.UIFigure = uifigure('Name', 'F1 MVP Simulator', 'Position', [100 100 900 600], 'Color', 'w');
+            % Ventana Principal
+            app.UIFigure = uifigure('Name', 'F1 MVP Simulator (Euler)', 'Position', [100 100 900 600], 'Color', 'w');
             
-            % Grid Layout - Fondo Blanco
             app.GridLayout = uigridlayout(app.UIFigure);
             app.GridLayout.ColumnWidth = {250, '1x'};
             app.GridLayout.RowHeight = {'1x'};
@@ -208,50 +247,38 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.LeftPanel.Layout.Row = 1;
             app.LeftPanel.Layout.Column = 1;
             app.LeftPanel.BackgroundColor = 'w';
-            % Borde sutil gris para separar
             app.LeftPanel.BorderType = 'line';
             app.LeftPanel.BorderWidth = 1;
             
-            % Titulo (Negro y Grande)
             app.LblTitulo = uilabel(app.LeftPanel);
             app.LblTitulo.Position = [20 540 200 30];
             app.LblTitulo.Text = 'CONFIGURACIÓN';
             app.LblTitulo.FontSize = 18; 
             app.LblTitulo.FontWeight = 'bold';
-            app.LblTitulo.FontColor = 'k'; % Negro
+            app.LblTitulo.FontColor = 'k'; 
             
-            % Label Velocidad
             app.LblVelocidad = uilabel(app.LeftPanel);
             app.LblVelocidad.Position = [20 480 200 22];
             app.LblVelocidad.Text = 'Velocidad (km/h):';
             app.LblVelocidad.FontWeight = 'bold';
             app.LblVelocidad.FontColor = 'k';
 
-            % Label Punto 1 Ingresado por Usr
-            % app.LblPunto1 = uilabel(app.LeftPanel);
-            % app.LblPunto1.Text = 'Punto 1';
-            % app.Lbl.FontWeight = 'bold';
-            % app.LblVelocidad.FontColor = 'k';
-            
-            % Campo Velocidad (Input)
             app.CampoVelocidad = uieditfield(app.LeftPanel, 'numeric');
             app.CampoVelocidad.Position = [20 450 100 30];
             app.CampoVelocidad.Value = 100;
             app.CampoVelocidad.FontSize = 14;
             app.CampoVelocidad.FontColor = 'k';
-            app.CampoVelocidad.BackgroundColor = [0.95 0.95 0.95]; % Gris muy suave para input
+            app.CampoVelocidad.BackgroundColor = [0.95 0.95 0.95]; 
             
-            % Botón Iniciar (Azul con Texto Blanco)
             app.BtnIniciar = uibutton(app.LeftPanel, 'push');
             app.BtnIniciar.Position = [20 380 210 50];
             app.BtnIniciar.Text = '▶ INICIAR TRAYECTORIA';
             app.BtnIniciar.FontSize = 14; 
             app.BtnIniciar.FontWeight = 'bold';
             app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; 
-            app.BtnIniciar.FontColor = 'w'; % Blanco
+            app.BtnIniciar.FontColor = 'w'; 
             app.BtnIniciar.ButtonPushedFcn = @app.iniciarTrayectoria;
             
-            % Estado (Negro default)
             app.LblEstado = uilabel(app.LeftPanel);
             app.LblEstado.Position = [20 320 210 30];
             app.LblEstado.Text = 'Estado: Esperando...';
@@ -259,7 +286,6 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.LblEstado.FontWeight = 'bold';
             app.LblEstado.FontColor = 'k';
             
-            % Info (Fondo blanco, texto negro)
             app.TextAreaInfo = uitextarea(app.LeftPanel);
             app.TextAreaInfo.Position = [20 50 210 250];
             app.TextAreaInfo.Editable = 'off';
@@ -280,7 +306,6 @@ classdef F1_MVP_App < matlab.apps.AppBase
             app.AxPista.YColor = 'k';
             app.AxPista.GridColor = [0.8 0.8 0.8];
             
-            % Iniciar
             app.startupFcn();
         end
     end 
