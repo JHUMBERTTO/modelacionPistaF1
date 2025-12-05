@@ -39,8 +39,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
     methods (Access = private)
         
         function startupFcn(app)
-            % 1. Calcular Matemática (Asumiendo que tienes esta función externa)
-            % Si no la tienes, necesitarás definir 'app.Coefs' manualmente.
+            % 1. Calcular Matemática
             [a,b,c,d] = calcularIncognitas(app.Points);
             app.Coefs = [a b c d];
             
@@ -52,8 +51,7 @@ classdef F1_MVP_App < matlab.apps.AppBase
             hold(app.AxPista, 'on');
             plot(app.AxPista, x, y, 'w--', 'LineWidth', 1);
             
-            % 3. Zonas Rojas (Pre-cálculo visual solo para referencia)
-            % Nota: Usamos las funciones externas si existen, si no, usa polyder interno
+            % 3. Zonas Rojas (Visualización estática)
             try
                 R = calcularRadioCurvatura(app.Coefs, x);
                 idx_bad = find(R < 50);
@@ -62,36 +60,35 @@ classdef F1_MVP_App < matlab.apps.AppBase
                 end
                 calcularGradas(app);
             catch
-                % Si fallan las funciones externas, no bloqueamos la app
             end
             
             axis(app.AxPista, 'equal');
             grid(app.AxPista, 'on');
-            title(app.AxPista, 'Simulación: Método de Euler', 'Color', 'k');
+            title(app.AxPista, 'Simulación: HUD & Euler', 'Color', 'k');
 
             app.AxPista.BackgroundColor = 'w';
             app.AxPista.Box = 'on';
         end
         
-        % --- BOTÓN INICIAR (REFACTORIZADO CON EULER) ---
+        % --- BOTÓN INICIAR CON HUD DE FÍSICA ---
+        % --- BOTÓN INICIAR CORREGIDO ---
         function iniciarTrayectoria(app, varargin)
             % 1. Configurar Interfaz
             app.RunID = app.RunID + 1;
             myLocalID = app.RunID;
             
-            app.BtnIniciar.Text = '🔄 REINICIAR';
-            app.BtnIniciar.BackgroundColor = [1 0.8 0];
-            app.BtnIniciar.FontColor = 'k';
-            app.LblEstado.Text = "Simulando (Euler)... 🏎️";
+            app.BtnIniciar.Text = '🛑 DETENER / REINICIAR';
+            app.BtnIniciar.BackgroundColor = [1 0.2 0.2]; % Rojo suave
+            app.LblEstado.Text = "Calculando Físicas... 📊";
             app.LblEstado.FontColor = [0 0.4 1]; 
             
             delete(findobj(app.AxPista, 'Tag', 'movil'));
             
-            % 2. Obtener Velocidad y Variables Físicas
+            % 2. Obtener Inputs
             v_kmh = app.CampoVelocidad.Value;
             v_ms = v_kmh / 3.6; 
             
-            % 3. Preparar Imagen del Carro
+            % 3. Cargar Imagen
             try
                 raw_img = imread('car.png');
                 car_img = imresize(raw_img, [40, NaN]);
@@ -101,19 +98,22 @@ classdef F1_MVP_App < matlab.apps.AppBase
             end
             w = 15; h = 8;
             
-            % 4. Inicialización Euler
-            % Derivadas del polinomio para calcular pendiente y radio
-            d1_coefs = polyder(app.Coefs);      % f'
-            d2_coefs = polyder(d1_coefs);       % f''
+            % 4. Inicialización Matemática
+            d1_coefs = polyder(app.Coefs);
+            d2_coefs = polyder(d1_coefs);
             
-            % Paso de tiempo (Delta Time)
-            dt = 0.05; 
+            dt = 0.05; % Paso de tiempo
+            x_curr = 10;
+            y_curr = polyval(app.Coefs, x_curr);
             
-            % Condiciones Iniciales
-            x_curr = 10;                        % X Inicial
-            y_curr = polyval(app.Coefs, x_curr); % Y Inicial
+            % --- VARIABLES ACUMULADORAS (HUD) ---
+            dist_total = 0;     % Metros recorridos
+            time_total = 0;     % Segundos transcurridos
+            heat_total = 0;     % Joules (Calor por fricción)
             
-            % Dibujar carro inicial
+            % Energía Inicial
+            K_initial = 0.5 * app.Mass * v_ms^2;
+            
             hold(app.AxPista, 'on');
             carrito = image(app.AxPista, ...
                 'CData', car_img, ...
@@ -125,109 +125,114 @@ classdef F1_MVP_App < matlab.apps.AppBase
             crashed = false;
             
             % =============================================================
-            % BUCLE DE EULER (Simulación paso a paso)
+            % BUCLE DE EULER + HUD
             % =============================================================
             while x_curr < 280
-                % Check de interrupción
                 if app.RunID ~= myLocalID, return; end
                 
-                % A. CALCULO DE GEOMETRÍA LOCAL
-                yp  = polyval(d1_coefs, x_curr); % Pendiente (m)
-                ypp = polyval(d2_coefs, x_curr); % Concavidad
-                
-                % Ángulo de la trayectoria
+                % A. Geometría
+                yp  = polyval(d1_coefs, x_curr);
+                ypp = polyval(d2_coefs, x_curr);
                 angulo_rad = atan(yp);
-                angulo_deg = rad2deg(angulo_rad);
                 
-                % B. MÉTODO DE EULER: Actualización de Posición
-                % Descomponemos la velocidad en X y Y
+                % B. Euler (Cinemática)
                 vx = v_ms * cos(angulo_rad);
                 vy = v_ms * sin(angulo_rad);
                 
-                % x(t+dt) = x(t) + vx * dt
                 x_next = x_curr + vx * dt;
-                % y(t+dt) = y(t) + vy * dt
                 y_next = y_curr + vy * dt;
+                y_next = polyval(app.Coefs, x_next); % Ajuste al riel
                 
-                % *Corrección Visual*: Como Euler puro puede "salirse" de la curva 
-                % por errores numéricos, ajustamos Y ligeramente al polinomio real 
-                % para que se vea sobre el riel (opcional, pero recomendado para apps).
-                % Si quieres Euler puro estricto, comenta la siguiente línea:
-                y_next = polyval(app.Coefs, x_next); 
+                % C. Físicas
+                dx = x_next - x_curr;
+                dy = y_next - y_curr;
+                dist_step = sqrt(dx^2 + dy^2);
+                
+                dist_total = dist_total + dist_step;
+                time_total = time_total + dt;
+                
+                % Radio y Límites
+                R_val = (1 + yp^2)^1.5 / abs(ypp);
+                
+                % Energía
+                K_curr = 0.5 * app.Mass * v_ms^2;
+                delta_E_mech = K_curr - K_initial; 
+                
+                % Calor (Q = Work fricción)
+                f_fric = app.Mu * app.Mass * app.G;
+                heat_step = f_fric * dist_step;
+                heat_total = heat_total + heat_step;
+                
+                % Vel Max
+                th = deg2rad(app.Theta);
+                num = sin(th) + app.Mu * cos(th);
+                den = cos(th) - app.Mu * sin(th);
+                if den <= 0, den = 0.001; end
+                V_max = sqrt(R_val * app.G * (num/den));
+                
+                % --- D. ACTUALIZAR HUD (SOLUCIÓN DEL ERROR) ---
+                % Usamos string(...) para convertir todo explícitamente a String Array
+                infoText = [
+                    "📊 TELEMETRÍA EN VIVO";
+                    "--------------------";
+                    string(sprintf("⏱️ Tiempo: %.2f s", time_total));
+                    string(sprintf("📍 Distancia: %.1f m", dist_total));
+                    " ";
+                    string(sprintf("🚀 Vel. Actual: %.1f km/h", v_kmh));
+                    string(sprintf("⚠️ Vel. Máx: %.1f km/h", V_max * 3.6));
+                    string(sprintf("🔄 Radio: %.1f m", R_val));
+                    " ";
+                    "⚡ ENERGÍA & CALOR";
+                    string(sprintf("🔥 Calor (Q): %.2f kJ", heat_total/1000));
+                    string(sprintf("🔋 E. Cinética: %.2f kJ", K_curr/1000));
+                    string(sprintf("cj ΔE Mecánica: %.2f J", delta_E_mech));
+                ];
+                
+                app.TextAreaInfo.Value = infoText;
 
-                % C. ROTACIÓN DE IMAGEN
+                % E. Gráficos
                 try
-                    car_rot = imrotate(car_img, angulo_deg, 'crop');
-                    carrito.CData = car_rot;
+                    carrito.CData = imrotate(car_img, rad2deg(angulo_rad), 'crop');
                 catch
                 end
-                
-                % D. MOVER OBJETO GRÁFICO
                 carrito.XData = [x_next - w/2, x_next + w/2];
                 carrito.YData = [y_next - h/2, y_next + h/2];
                 
-                % E. FÍSICA: CHECK DE DERRAPE
-                % Radio de curvatura: R = (1 + y'^2)^(3/2) / |y''|
-                R_val = (1 + yp^2)^1.5 / abs(ypp);
-                
-                % Velocidad Máxima en este punto
-                th_peralte = deg2rad(app.Theta);
-                num = sin(th_peralte) + app.Mu * cos(th_peralte);
-                den = cos(th_peralte) - app.Mu * sin(th_peralte);
-                
-                % Evitar divisiones imaginarias si el denominador es malo
-                if den <= 0, den = 0.001; end 
-                V_max = sqrt(R_val * app.G * (num/den));
-                
+                % F. Check de Derrape
                 if v_ms > V_max
                     crashed = true;
-                    app.LblEstado.Text = "¡DERRAPE DETECTADO! 💥";
+                    app.LblEstado.Text = "¡DERRAPE! 💥";
                     
-                    % Animación de salida por tangente (Inercia)
-                    v_dir = [vx, vy]; 
-                    u_dir = v_dir / norm(v_dir); % Vector unitario dirección actual
+                    v_dir = [vx, vy]; u_dir = v_dir/norm(v_dir);
                     p_curr = [x_next, y_next];
-                    
-                    for k = 1:20
+                    for k = 1:15
                         if app.RunID ~= myLocalID, return; end
-                        % Movimiento lineal simple post-choque
-                        p_next = p_curr + u_dir * (k*2); 
-                        
+                        p_next = p_curr + u_dir * (k*2);
                         carrito.XData = [p_next(1)-w/2, p_next(1)+w/2];
                         carrito.YData = [p_next(2)-h/2, p_next(2)+h/2];
-                        plot(app.AxPista, p_next(1), p_next(2), 'r.', 'MarkerSize', 5, 'Tag', 'movil');
+                        plot(app.AxPista, p_next(1), p_next(2), 'rx');
                         drawnow; pause(0.02);
                     end
                     
-                    app.TextAreaInfo.Value = {
-                        sprintf("Derrape en X = %.1f m", x_next);
-                        sprintf("Velocidad Carro: %.1f km/h", v_kmh);
-                        sprintf("Velocidad Max: %.1f km/h", V_max * 3.6);
-                        "-----------------";
-                        "Fuerza centrífuga > Fricción";
-                    };
-                    break; % Romper bucle while
+                    % Concatenamos el mensaje de error al arreglo de strings existente
+                    app.TextAreaInfo.Value = [infoText; " "; "❌ FUERZA G EXCESIVA"];
+                    break;
                 end
                 
-                % Actualizar variables para siguiente iteración
                 x_curr = x_next;
                 y_curr = y_next;
                 
                 drawnow;
-                % Pausa dinámica para intentar mantener velocidad visual constante
-                % (Opcional, 0.01 es estándar)
                 pause(0.01); 
             end
             
             if ~crashed && app.RunID == myLocalID
-                app.LblEstado.Text = "Vuelta Exitosa ✅";
-                app.LblEstado.FontColor = [0 0.5 0]; 
-                app.BtnIniciar.Text = '▶ INICIAR TRAYECTORIA';
+                app.LblEstado.Text = "Finalizado ✅";
+                app.BtnIniciar.Text = '▶ NUEVA CARRERA';
                 app.BtnIniciar.BackgroundColor = [0.2 0.6 1]; 
-                app.BtnIniciar.FontColor = 'w';
             end
         end
-    end 
+    end
 
     % =====================================================================
     % 3. DISEÑO VISUAL (LAYOUT) - SIN CAMBIOS
